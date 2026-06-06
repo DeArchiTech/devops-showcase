@@ -1,0 +1,15 @@
+# Labels that produce unbounded cardinality — one time series per unique value.
+# Adding any of these to a Prometheus metric will cause memory exhaustion at scale.
+blocked_label_names:
+  - user_id
+  - request_id
+  - session_id
+  - email
+  - token
+  - uuid
+  - trace_id
+  - order_id
+  - transaction_id
+  - ip_address
+  - filename
+  - query

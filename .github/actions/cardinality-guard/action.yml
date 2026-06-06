@@ -1,0 +1,71 @@
+name: Cardinality Guard
+description: >
+  Scans Python source files for Prometheus metric definitions with
+  high-cardinality label names and fails the build if any are found.
+  Catches series explosion before it reaches production.
+
+inputs:
+  scan-path:
+    description: Directory to scan
+    default: "."
+  config-file:
+    description: Path to cardinality-guard.yaml config
+    default: ".github/actions/cardinality-guard/cardinality-guard.yaml"
+
+runs:
+  using: composite
+  steps:
+    - name: Scan metric definitions for high-cardinality labels
+      shell: python
+      run: |
+        import ast, sys, os, yaml, pathlib
+
+        config_path = "${{ inputs.config-file }}"
+        scan_path   = "${{ inputs.scan-path }}"
+
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+
+        blocked = set(config.get("blocked_label_names", []))
+        metric_classes = {"Counter", "Gauge", "Histogram", "Summary"}
+        violations = []
+
+        for py_file in pathlib.Path(scan_path).rglob("*.py"):
+            try:
+                tree = ast.parse(py_file.read_text())
+            except SyntaxError:
+                continue
+
+            for node in ast.walk(tree):
+                # Match: Counter("name", "help", ["label1", "label2"])
+                if not isinstance(node, ast.Call):
+                    continue
+                func_name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if func_name not in metric_classes:
+                    continue
+
+                for arg in node.args + [kw.value for kw in node.keywords]:
+                    if not isinstance(arg, ast.List):
+                        continue
+                    for elt in arg.elts:
+                        if not isinstance(elt, ast.Constant):
+                            continue
+                        label = elt.value
+                        if label in blocked:
+                            violations.append(
+                                f"  {py_file}:{node.lineno} — "
+                                f"'{func_name}' uses blocked label '{label}'"
+                            )
+
+        if violations:
+            print("Cardinality Guard FAILED — high-cardinality labels detected:\n")
+            for v in violations:
+                print(v)
+            print(
+                "\nThese labels produce one time series per unique value, "
+                "which causes Prometheus memory exhaustion at scale.\n"
+                "Remove them or move the value to a log line instead."
+            )
+            sys.exit(1)
+
+        print(f"Cardinality Guard PASSED — scanned {scan_path}, no violations found.")

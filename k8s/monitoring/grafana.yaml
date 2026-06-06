@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasource
+  namespace: monitoring
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: monitoring
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: default
+        folder: DevOps Showcase
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard
+  namespace: monitoring
+data:
+  signal-api.json: |
+    {
+      "title": "Signal API — RED Dashboard",
+      "panels": [
+        {
+          "title": "Request Rate (req/s)",
+          "type": "graph",
+          "targets": [{ "expr": "rate(api_requests_total[1m])" }],
+          "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 }
+        },
+        {
+          "title": "Error Rate (%)",
+          "type": "graph",
+          "targets": [{ "expr": "rate(api_requests_total{status=~'5..'}[1m]) / rate(api_requests_total[1m]) * 100" }],
+          "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 }
+        },
+        {
+          "title": "p99 Latency (seconds)",
+          "type": "graph",
+          "targets": [{ "expr": "histogram_quantile(0.99, rate(api_request_duration_seconds_bucket[5m]))" }],
+          "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 }
+        }
+      ],
+      "schemaVersion": 36,
+      "version": 1
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.0.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: "showcase"
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /var/lib/grafana/dashboards/signal-api.json
+          volumeMounts:
+            - name: datasource
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboard
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: datasource
+          configMap:
+            name: grafana-datasource
+        - name: dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: dashboard
+          configMap:
+            name: grafana-dashboard
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: LoadBalancer

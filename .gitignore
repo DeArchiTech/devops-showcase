@@ -1,0 +1,6 @@
+terraform/.terraform/
+terraform/terraform.tfstate*
+terraform/kubeconfig.yaml
+*.tfvars
+.env
+__pycache__/
