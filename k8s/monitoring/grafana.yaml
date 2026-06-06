@@ -11,6 +11,9 @@ data:
         type: prometheus
         url: http://prometheus.monitoring.svc.cluster.local:9090
         isDefault: true
+      - name: Loki
+        type: loki
+        url: http://loki.monitoring.svc.cluster.local:3100
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -36,24 +39,135 @@ data:
   signal-api.json: |
     {
       "title": "Signal API — RED Dashboard",
+      "uid": "red-dashboard",
       "panels": [
         {
+          "id": 1,
           "title": "Request Rate (req/s)",
-          "type": "graph",
-          "targets": [{ "expr": "rate(api_requests_total[1m])" }],
+          "type": "timeseries",
+          "datasource": "Prometheus",
+          "targets": [{ "expr": "rate(api_requests_total[1m])", "legendFormat": "{{endpoint}}" }],
           "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 }
         },
         {
+          "id": 2,
           "title": "Error Rate (%)",
-          "type": "graph",
-          "targets": [{ "expr": "rate(api_requests_total{status=~'5..'}[1m]) / rate(api_requests_total[1m]) * 100" }],
+          "type": "timeseries",
+          "datasource": "Prometheus",
+          "targets": [{ "expr": "rate(api_requests_total{status=~'5..'}[1m]) / rate(api_requests_total[1m]) * 100", "legendFormat": "error %" }],
           "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 }
         },
         {
+          "id": 3,
           "title": "p99 Latency (seconds)",
-          "type": "graph",
-          "targets": [{ "expr": "histogram_quantile(0.99, rate(api_request_duration_seconds_bucket[5m]))" }],
+          "type": "timeseries",
+          "datasource": "Prometheus",
+          "targets": [{ "expr": "histogram_quantile(0.99, rate(api_request_duration_seconds_bucket[5m]))", "legendFormat": "p99" }],
           "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 }
+        }
+      ],
+      "schemaVersion": 36,
+      "version": 1
+    }
+
+  slo.json: |
+    {
+      "title": "Signal API — SLO Dashboard",
+      "uid": "slo-dashboard",
+      "panels": [
+        {
+          "id": 1,
+          "title": "Success Rate (SLO: 99.9%)",
+          "type": "stat",
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "job:request_success_rate:rate5m * 100",
+              "legendFormat": "Success Rate %"
+            }
+          ],
+          "gridPos": { "x": 0, "y": 0, "w": 8, "h": 4 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 98,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red",    "value": null },
+                  { "color": "yellow", "value": 99   },
+                  { "color": "green",  "value": 99.9 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 2,
+          "title": "Error Budget Remaining",
+          "type": "stat",
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "clamp_min((1 - (1 - job:request_success_rate:rate5m) / (1 - 0.999)) * 100, 0)",
+              "legendFormat": "Budget %"
+            }
+          ],
+          "gridPos": { "x": 8, "y": 0, "w": 8, "h": 4 },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red",    "value": null },
+                  { "color": "yellow", "value": 25   },
+                  { "color": "green",  "value": 50   }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "Burn Rate  (1× = on track  |  >1× = burning budget)",
+          "type": "timeseries",
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "(1 - job:request_success_rate:rate5m) / (1 - 0.999)",
+              "legendFormat": "Burn Rate"
+            }
+          ],
+          "gridPos": { "x": 0, "y": 4, "w": 16, "h": 8 },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red",   "value": 1    }
+                ]
+              },
+              "custom": {
+                "thresholdsStyle": { "mode": "line" }
+              }
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "API Logs",
+          "type": "logs",
+          "datasource": "Loki",
+          "targets": [
+            {
+              "expr": "{namespace=\"default\", app=\"signal-api\"}",
+              "legendFormat": ""
+            }
+          ],
+          "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 }
         }
       ],
       "schemaVersion": 36,

@@ -11,8 +11,10 @@ A production-grade DevOps pipeline: Terraform → Docker/k3s → GitHub Actions 
 | Provision | Terraform + Vultr |
 | Orchestration | k3s (Kubernetes) |
 | CI/CD | GitHub Actions |
-| Metrics | Prometheus |
-| Dashboards | Grafana (pre-provisioned RED dashboard) |
+| Metrics | Prometheus + recording rules |
+| Logs | Loki + Promtail |
+| Dashboards | Grafana (RED dashboard + SLO error budget) |
+| Alerting | Alertmanager + Slack webhook |
 | Security gate | Cardinality Guard (custom GitHub Action) |
 
 ## Quick Start
@@ -21,10 +23,15 @@ A production-grade DevOps pipeline: Terraform → Docker/k3s → GitHub Actions 
 # 1. Provision infrastructure
 make provision
 
-# 2. Deploy app + monitoring
+# 2. Create the Slack webhook secret (Alertmanager reads this at startup)
+kubectl create secret generic alertmanager-slack \
+  --from-literal=webhook-url='https://hooks.slack.com/services/XXX/YYY/ZZZ' \
+  -n monitoring
+
+# 3. Deploy app + monitoring
 make deploy
 
-# 3. Open Grafana
+# 4. Open Grafana
 make monitor
 ```
 
@@ -48,18 +55,28 @@ GitHub Push
     └── kubectl rollout → k3s on Vultr VPS
                 │
                 ├── signal-api pod (FastAPI, non-root, resource limits)
-                ├── Prometheus (scrapes /metrics every 15s)
-                └── Grafana (RED dashboard: rate, errors, p99 latency)
+                ├── Prometheus (scrapes /metrics + recording rules for SLO)
+                │       └── Alertmanager (fires to Slack on error rate / p99 breach)
+                ├── Loki + Promtail (pod log aggregation)
+                └── Grafana
+                        ├── RED dashboard (rate, errors, p99 latency)
+                        ├── SLO dashboard (error budget burn rate)
+                        └── Logs panel (Loki — drill from metric spike to log line)
 ```
 
 ## TODO
 
-### Phase 2
+### Phase 2 — Observability (in progress)
 
-- [ ] **Close port 6443 to public internet** — currently open to `0.0.0.0/0` for kubectl access from GitHub Actions runners. Fix: deploy a self-hosted Actions runner as a pod inside k3s so the API server is only accessed on the internal cluster network, never exposed externally. See: [actions-runner-controller](https://github.com/actions/actions-runner-controller)
+- [x] **Alertmanager + Slack webhook** — `PrometheusRule` fires on high error rate, p99 > 500ms, and pod down; Alertmanager routes to Slack
+- [x] **Loki + Promtail** — Promtail DaemonSet ships pod logs to Loki; Grafana log panel lets you drill from a metric spike directly to the log lines that caused it (PLG stack)
+- [x] **SLO dashboard + error budget** — recording rules pre-aggregate success rate into `job:request_success_rate:rate5m`; second Grafana dashboard shows SLO target, burn rate, and remaining error budget
+
+### Phase 3
+
+- [ ] **Close port 6443 to public internet** — deploy self-hosted Actions runner as a pod inside k3s so the API server is never exposed externally. See: [actions-runner-controller](https://github.com/actions/actions-runner-controller)
 - [ ] Cardinality Guard Path B — runtime integration test (spin up app + Prometheus via Docker Compose, fire mock traffic, count active series via `/api/v1/series`)
 - [ ] HPA (horizontal pod autoscaling) on CPU
 - [ ] Helm for monitoring stack (replace raw manifests)
-- [ ] Alert rules + Alertmanager
 - [ ] Remote Terraform state migration to versioned backend
 - [ ] Staging environment with PR previews

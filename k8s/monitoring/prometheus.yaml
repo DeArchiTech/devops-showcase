@@ -1,12 +1,76 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: prometheus-rules
+  namespace: monitoring
+data:
+  recording.yml: |
+    groups:
+      - name: slo_recording
+        interval: 30s
+        rules:
+          - record: job:request_success_rate:rate5m
+            expr: |
+              (
+                sum(rate(api_requests_total{status!~"5.."}[5m]))
+                /
+                sum(rate(api_requests_total[5m]))
+              ) or vector(1)
+
+  alerts.yml: |
+    groups:
+      - name: signal_api
+        rules:
+          - alert: HighErrorRate
+            expr: |
+              (
+                sum(rate(api_requests_total{status=~"5.."}[5m]))
+                /
+                sum(rate(api_requests_total[5m]))
+              ) > 0.05
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "High error rate on signal-api"
+              description: "Error rate {{ $value | humanizePercentage }} exceeds 5% — SLO at risk"
+
+          - alert: HighP99Latency
+            expr: histogram_quantile(0.99, rate(api_request_duration_seconds_bucket[5m])) > 0.5
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High p99 latency on signal-api"
+              description: "p99 latency is {{ $value | humanizeDuration }} (threshold: 500ms)"
+
+          - alert: APIDown
+            expr: up{job="signal-api"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "signal-api is unreachable"
+              description: "Prometheus cannot scrape signal-api — pod may be down or crashlooping"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: prometheus-config
   namespace: monitoring
 data:
   prometheus.yml: |
     global:
       scrape_interval: 15s
+      evaluation_interval: 15s
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager.monitoring.svc.cluster.local:9093']
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
 
     scrape_configs:
       - job_name: signal-api
@@ -44,10 +108,15 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
 ---
 apiVersion: v1
 kind: Service
