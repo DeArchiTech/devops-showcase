@@ -14,9 +14,11 @@ spec:
       labels:
         app: signal-api
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       containers:
         - name: signal-api
-          image: ghcr.io/GITHUB_USERNAME/devops-showcase:latest
+          image: ghcr.io/dearchitech/devops-showcase:latest
           ports:
             - containerPort: 8000
           # Delay traffic until /health returns 200 — prevents bad deploys
