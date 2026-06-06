@@ -18,7 +18,7 @@ runs:
     - name: Scan metric definitions for high-cardinality labels
       shell: python
       run: |
-        import ast, sys, os, yaml, pathlib
+        import ast, re, sys, yaml, pathlib
 
         config_path = "${{ inputs.config-file }}"
         scan_path   = "${{ inputs.scan-path }}"
@@ -26,46 +26,77 @@ runs:
         with open(config_path) as f:
             config = yaml.safe_load(f)
 
-        blocked = set(config.get("blocked_label_names", []))
-        metric_classes = {"Counter", "Gauge", "Histogram", "Summary"}
+        # Compile regex patterns — catches variants like user_id, userid, userId
+        blocked_patterns = [
+            re.compile(p, re.IGNORECASE)
+            for p in config.get("blocked_label_patterns", [])
+        ]
+
+        METRIC_CLASSES = {"Counter", "Gauge", "Histogram", "Summary"}
+
+        class CardinalityChecker(ast.NodeVisitor):
+            def __init__(self):
+                self.violations = []
+
+            def visit_Call(self, node):
+                func_name = (
+                    getattr(node.func, "id", None) or
+                    getattr(node.func, "attr", None)
+                )
+                if func_name not in METRIC_CLASSES:
+                    self.generic_visit(node)
+                    return
+
+                # Check both positional labelnames arg (3rd arg) and keyword
+                label_lists = []
+                if len(node.args) >= 3 and isinstance(node.args[2], ast.List):
+                    label_lists.append(node.args[2])
+                for kw in node.keywords:
+                    if kw.arg == "labelnames" and isinstance(kw.value, ast.List):
+                        label_lists.append(kw.value)
+
+                for label_list in label_lists:
+                    for elt in label_list.elts:
+                        if not isinstance(elt, ast.Constant):
+                            continue
+                        label = str(elt.value)
+                        for pattern in blocked_patterns:
+                            if pattern.search(label):
+                                self.violations.append(
+                                    (node.lineno, func_name, label, pattern.pattern)
+                                )
+
+                self.generic_visit(node)
+
         violations = []
+        files_scanned = 0
 
         for py_file in pathlib.Path(scan_path).rglob("*.py"):
             try:
                 tree = ast.parse(py_file.read_text())
             except SyntaxError:
                 continue
+            files_scanned += 1
+            checker = CardinalityChecker()
+            checker.visit(tree)
+            for lineno, metric, label, pattern in checker.violations:
+                violations.append(
+                    f"  {py_file}:{lineno} — "
+                    f"'{metric}' uses label '{label}' "
+                    f"(matches blocked pattern: {pattern})"
+                )
 
-            for node in ast.walk(tree):
-                # Match: Counter("name", "help", ["label1", "label2"])
-                if not isinstance(node, ast.Call):
-                    continue
-                func_name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-                if func_name not in metric_classes:
-                    continue
-
-                for arg in node.args + [kw.value for kw in node.keywords]:
-                    if not isinstance(arg, ast.List):
-                        continue
-                    for elt in arg.elts:
-                        if not isinstance(elt, ast.Constant):
-                            continue
-                        label = elt.value
-                        if label in blocked:
-                            violations.append(
-                                f"  {py_file}:{node.lineno} — "
-                                f"'{func_name}' uses blocked label '{label}'"
-                            )
+        print(f"Cardinality Guard scanned {files_scanned} file(s).")
 
         if violations:
-            print("Cardinality Guard FAILED — high-cardinality labels detected:\n")
+            print("\nFAILED — high-cardinality labels detected:\n")
             for v in violations:
                 print(v)
             print(
                 "\nThese labels produce one time series per unique value, "
-                "which causes Prometheus memory exhaustion at scale.\n"
-                "Remove them or move the value to a log line instead."
+                "causing Prometheus memory exhaustion at scale.\n"
+                "Move the value to a log line or structured event instead."
             )
             sys.exit(1)
 
-        print(f"Cardinality Guard PASSED — scanned {scan_path}, no violations found.")
+        print("PASSED — no high-cardinality label violations found.")

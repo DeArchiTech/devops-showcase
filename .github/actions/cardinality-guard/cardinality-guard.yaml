@@ -1,15 +1,16 @@
-# Labels that produce unbounded cardinality — one time series per unique value.
-# Adding any of these to a Prometheus metric will cause memory exhaustion at scale.
-blocked_label_names:
-  - user_id
-  - request_id
-  - session_id
-  - email
-  - token
-  - uuid
-  - trace_id
-  - order_id
-  - transaction_id
-  - ip_address
-  - filename
-  - query
+# Regex patterns for label names that produce unbounded cardinality.
+# Each unique value creates a new Prometheus time series — at scale this
+# causes OOM crashes. Patterns are case-insensitive and match substrings.
+blocked_label_patterns:
+  - "user_?id"
+  - "request_?id"
+  - "session_?id"
+  - "trace_?id"
+  - "order_?id"
+  - "transaction_?id"
+  - "ip_?address"
+  - "email"
+  - "token"
+  - "uuid"
+  - "filename"
+  - "query"
