@@ -24,8 +24,6 @@ trace.get_tracer_provider().add_span_processor(
         )
     )
 )
-FastAPIInstrumentor.instrument_app(app)
-
 # Metrics — label cardinality is intentionally bounded (endpoint + status only)
 REQUEST_COUNT = Counter(
     "api_requests_total",
@@ -55,6 +53,11 @@ async def record_metrics(request: Request, call_next):
     print(f'trace_id={trace_id} method={request.method} path={endpoint} status={response.status_code} duration={duration:.3f}s')
 
     return response
+
+# Instrument AFTER the custom middleware is registered — Starlette wraps
+# middleware in reverse-add order, so this makes OTel's span middleware the
+# outermost layer and ensures record_metrics sees an active span/trace_id.
+FastAPIInstrumentor.instrument_app(app)
 
 @app.get("/health")
 def health():
