@@ -64,6 +64,10 @@ GitHub Push
                         └── Logs panel (Loki — drill from metric spike to log line)
 ```
 
+## Incident: synthetic monitoring caught a silent prod outage
+
+While wiring up the blackbox exporter, the new external probe immediately reported `probe_success == 0` for `http://45.32.80.218/health` — yet every internal health check (readiness probes, in-cluster scrape) was green. Root cause: `signal-api`'s `Service` was `type: LoadBalancer`, but k3s's built-in LB (`klipper-lb`) only binds the node's external IP to **one Service per port**, and Traefik already owned `:80`. The Service sat in `<pending>` and the public endpoint had been silently 404ing at the Traefik layer — invisible to every internal check. Fixed by switching `signal-api` to `ClusterIP` and adding an `Ingress` so Traefik routes `/` to it. This is the textbook case for synthetic monitoring: **internal health ≠ what the user actually experiences.**
+
 ## TODO
 
 ### Phase 2 — Observability (in progress)
@@ -71,6 +75,7 @@ GitHub Push
 - [x] **Alertmanager + Slack webhook** — `PrometheusRule` fires on high error rate, p99 > 500ms, and pod down; Alertmanager routes to Slack
 - [x] **Loki + Promtail** — Promtail DaemonSet ships pod logs to Loki; Grafana log panel lets you drill from a metric spike directly to the log lines that caused it (PLG stack)
 - [x] **SLO dashboard + error budget** — recording rules pre-aggregate success rate into `job:request_success_rate:rate5m`; second Grafana dashboard shows SLO target, burn rate, and remaining error budget
+- [x] **Synthetic monitoring** — blackbox exporter probes `/health` from outside the cluster on the real public path; caught a real silent outage on first deploy (see incident above); `SyntheticProbeFailed` alert wired to Alertmanager
 
 ### Phase 3
 

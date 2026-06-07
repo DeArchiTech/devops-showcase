@@ -55,4 +55,25 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 8000
-  type: LoadBalancer
+  type: ClusterIP
+---
+# k3s's built-in LoadBalancer (klipper-lb) only binds the node's external IP
+# to one Service per port, and Traefik already owns :80/:443 — so signal-api
+# must be reached through Traefik's Ingress rather than its own LoadBalancer.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: signal-api
+  labels:
+    app: signal-api
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: signal-api
+                port:
+                  number: 80

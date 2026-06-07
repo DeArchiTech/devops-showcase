@@ -52,6 +52,15 @@ data:
             annotations:
               summary: "signal-api is unreachable"
               description: "Prometheus cannot scrape signal-api — pod may be down or crashlooping"
+
+          - alert: SyntheticProbeFailed
+            expr: probe_success{job="blackbox-http"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Synthetic probe failing for {{ $labels.instance }}"
+              description: "External health check has failed for 2+ minutes — the service may be unreachable to real users even if internal pods report healthy"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -81,6 +90,24 @@ data:
       - job_name: k3s-node
         static_configs:
           - targets: ['localhost:9100']
+
+      # Synthetic monitoring — probe the public endpoint from outside the pod,
+      # the same way a real user would hit it (through the LoadBalancer)
+      - job_name: blackbox-http
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        static_configs:
+          - targets:
+              - http://signal-api.default.svc.cluster.local/health
+              - http://45.32.80.218/health
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: blackbox-exporter.monitoring.svc.cluster.local:9115
 ---
 apiVersion: apps/v1
 kind: Deployment
