@@ -13,7 +13,9 @@ A production-grade DevOps pipeline: Terraform → Docker/k3s → GitHub Actions 
 | CI/CD | GitHub Actions |
 | Metrics | Prometheus + recording rules |
 | Logs | Loki + Promtail |
-| Dashboards | Grafana (RED dashboard + SLO error budget) |
+| Traces | Tempo + OpenTelemetry (FastAPI auto-instrumentation) |
+| Synthetic checks | Blackbox Exporter (probes the public endpoint like a real user) |
+| Dashboards | Grafana (RED, SLO error budget, Synthetic Monitoring) — full trace ↔ log ↔ metric correlation |
 | Alerting | Alertmanager + Slack webhook |
 | Security gate | Cardinality Guard (custom GitHub Action) |
 
@@ -55,14 +57,26 @@ GitHub Push
     └── kubectl rollout → k3s on Vultr VPS
                 │
                 ├── signal-api pod (FastAPI, non-root, resource limits)
+                │       ├── emits metrics  → Prometheus
+                │       ├── emits traces   → Tempo (OTLP/gRPC, auto-instrumented)
+                │       └── logs trace_id  → stdout → Promtail → Loki
                 ├── Prometheus (scrapes /metrics + recording rules for SLO)
-                │       └── Alertmanager (fires to Slack on error rate / p99 breach)
+                │       └── Alertmanager (fires to Slack: error rate / p99 / pod down / probe failed)
+                ├── Blackbox Exporter (probes /health from OUTSIDE the cluster — real user path)
                 ├── Loki + Promtail (pod log aggregation)
-                └── Grafana
+                ├── Tempo (distributed tracing backend)
+                └── Grafana — fully correlated observability
                         ├── RED dashboard (rate, errors, p99 latency)
-                        ├── SLO dashboard (error budget burn rate)
-                        └── Logs panel (Loki — drill from metric spike to log line)
+                        ├── SLO dashboard (error budget burn rate + live Loki logs)
+                        ├── Synthetic Monitoring dashboard (external probe uptime/latency)
+                        └── Trace ↔ Log ↔ Metric correlation: click a trace_id in
+                            a log line → jump to its span in Tempo, or click a span
+                            → jump to the exact log lines that came out of it
 ```
+
+### Tracing in 30 seconds
+
+The app is instrumented with OpenTelemetry's FastAPI auto-instrumentation — every request gets a trace exported to Tempo over OTLP/gRPC, and the same `trace_id` is printed in the request log line. Promtail ships that line to Loki, and Grafana's Loki↔Tempo `derivedFields`/`tracesToLogsV2` wiring turns it into a one-click jump in either direction — the same workflow you'd use to debug a slow request in production: see the spike on the RED dashboard → open the trace in Tempo → jump straight to the logs that span emitted.
 
 ## Incident: synthetic monitoring caught a silent prod outage
 

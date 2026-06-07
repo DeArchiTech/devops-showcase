@@ -13,7 +13,26 @@ data:
         isDefault: true
       - name: Loki
         type: loki
+        uid: loki
         url: http://loki.monitoring.svc.cluster.local:3100
+        jsonData:
+          # Click a trace_id in a log line and jump straight to its trace in Tempo
+          derivedFields:
+            - datasourceUid: tempo
+              matcherRegex: 'trace_id=(\w+)'
+              name: TraceID
+              url: '$${__value.raw}'
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        jsonData:
+          # Click a span in Tempo and jump to the matching log lines in Loki
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: '-1m'
+            spanEndTimeShift: '1m'
+            filterByTraceID: true
 ---
 apiVersion: v1
 kind: ConfigMap
